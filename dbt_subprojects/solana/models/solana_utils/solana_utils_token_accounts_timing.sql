@@ -43,8 +43,8 @@ WITH
                   address
                   , token_balance_owner
                   , token_mint_address
-                  , MIN(block_time) AS activity_start
-                  , MAX(block_time) AS activity_end
+                  , CAST(MIN(block_time) AS TIMESTAMP) AS activity_start
+                  , CAST(MAX(block_time) AS TIMESTAMP) AS activity_end
             FROM pair_orderings
             GROUP BY 1, 2, 3, token_pairing_rank
       )
@@ -63,10 +63,14 @@ WITH
 
 -- final table retains existing solana.account_activity columns with additional start/end columns
 SELECT
-    aa.*
+    aa.address
+    , aa.token_balance_owner
+    , aa.token_mint_address
+    , aa.activity_start
+    , aa.activity_end
     , CASE
-        WHEN nft.account_mint IS NOT NULL THEN 'nft'
-        ELSE 'fungible'
+            WHEN nft.account_mint IS NOT NULL THEN 'nft'
+            ELSE 'fungible'
       END AS account_type
 FROM account_activity_base aa
 LEFT JOIN nft_addresses nft
