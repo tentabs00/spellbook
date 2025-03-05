@@ -1,11 +1,27 @@
+{{
+  config(
+        schema = 'solana_utils',
+        alias = 'token_accounts',
+        materialized = 'incremental',
+        file_format = 'delta',
+        incremental_strategy = 'merge',
+        unique_key = ['address'],
+        post_hook='{{ expose_spells(\'["solana"]\',
+                                    "sector",
+                                    "solana_utils",
+                                    \'["ilemi"]\') }}')
+}}
+
 WITH token_offsetter AS (
     -- adds helper column to identify when an address was assigned a new token
     SELECT
         *
         , LAG(token_mint_address) OVER (PARTITION BY address, token_balance_owner ORDER BY block_time ASC) AS prev_token
-    FROM solana.account_activity
+    FROM {{ source('solana','account_activity') }}
+    {% if is_incremental() %}
+    WHERE {{incremental_predicate('block_time')}}
+    {% endif %}
 )
-
 , pair_orderings AS (
     -- identifies the ordering of each address-mint pairing with support for repeated pairings
     SELECT
@@ -18,7 +34,6 @@ WITH token_offsetter AS (
           ) OVER (PARTITION BY address, token_balance_owner ORDER BY block_time ASC) AS token_pairing_rank
     FROM token_offsetter
 )
-
 , account_activity_base AS (
     -- flattens data to each address-mint pairing with start/end timestamps
     SELECT
@@ -30,19 +45,17 @@ WITH token_offsetter AS (
     FROM pair_orderings
     GROUP BY 1, 2, 3, token_pairing_rank
 )
-
 , nft_addresses AS (
     -- updated nft logic to exclude fungible token_standard types from nft classification
     SELECT
         account_mint
-    FROM tokens_solana.nft
+    FROM {{ ref('tokens_solana_nft') }}
     WHERE
         account_mint IS NOT NULL
         -- without this filter the old table classified many fungible tokens (e.g. JUP,DRIFT) as account_type=nft
         AND token_standard NOT IN ('Fungible', 'FungibleAsset')
     GROUP BY 1
 )
-
 -- final table retains account_activity structure with additional start/end columns
 SELECT
     aa.*
@@ -53,4 +66,4 @@ SELECT
 FROM account_activity_base aa
 LEFT JOIN nft_addresses nft
     ON aa.token_mint_address = nft.account_mint
-ORDER BY address, activity_start;
+ORDER BY address, activity_start
